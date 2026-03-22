@@ -9,10 +9,6 @@
  \____  $$  | $$ /$$ /$$__  $$  | $$ /$$| $$ | $$ | $$ /$$__  $$
  /$$$$$$$/  |  $$$$/|  $$$$$$$  |  $$$$/| $$ | $$ | $$|  $$$$$$$
 |_______/    \___/   \_______/   \___/  |__/ |__/ |__/ \_______/
-                                                                
-                                                                
-
-
 ```
 
 **stat my agent.**
@@ -25,22 +21,22 @@
 
 ---
 
-Task completion scores lie ¯\\_(ツ)_/¯  
+Task completion scores lie.
 
 An agent that finishes 90% of tasks can still reason inconsistently, call the wrong tools, miss its own errors, and silently abandon the original goal. None of that shows up in a pass/fail metric. All of it matters in production.
 
-`statma` runs a deterministic, reproducible benchmark across four behavioural dimensions and produces a scored, shareable result. Use it to catch regressions, compare models, measure whether your agent wrapper actually helps, or find exactly where your agent breaks before your users do.
+`statma` runs a deterministic, reproducible benchmark across four behavioural dimensions and produces a scored, shareable result. Point it at your agent. Get a number. No code changes required.
 
 ---
 
 ## What it measures
 
-| dimension | question |
-| :--- | :--- |
-| `reasoning-consistency` | Does it reach the same conclusion when the same question is phrased differently? |
-| `tool-reliability` | Does it call the right tool, with the right arguments, for the right reason? |
-| `failure-recovery` | When it produces a wrong intermediate result, does it catch and correct it? |
-| `goal-faithfulness` | Does it finish the task it was given, or does it drift mid-trajectory? |
+| dimension | question | runs against |
+| :--- | :--- | :--- |
+| `reasoning-consistency` | Does it reach the same conclusion when the same question is phrased differently? | agents + models |
+| `tool-reliability` | Does it call the right tool, with the right arguments, for the right reason? | agents only |
+| `failure-recovery` | When it produces a wrong intermediate result, does it catch and correct it? | agents + models |
+| `goal-faithfulness` | Does it finish the task it was given, or does it drift mid-trajectory? | agents + models |
 
 Evaluation is rule-based, not LLM-as-judge. The full test suite lives in [`statma/suite/`](statma/suite/) as plain YAML. Every case is readable, auditable, and forkable.
 
@@ -61,30 +57,131 @@ pip install -e .
 
 ---
 
-## Three ways to use statma
+## Quickstart — two commands
 
-### Mode 1 — Score a single agent or model
-
-The baseline use case. Point statma at anything that accepts a prompt and returns a response.
+You have an agent. It is a Python file. You want a score.
 
 ```bash
-# local model via ollama
-statma run --adapter ollama --model llama3.1:8b
+# step 1 — statma wraps your agent and serves it locally
+statma serve ./my_agent.py
 
-# custom agent script
-statma run --adapter script --entrypoint ./my_agent.py
-
-# openai or any openai-compatible endpoint
-statma run --adapter openai --model gpt-4o --base-url https://api.openai.com/v1
-
-# single dimension only
-statma run --adapter ollama --model llama3.1:8b --only tool-reliability
+# step 2 — run the benchmark
+statma run --target http://localhost:7341
 ```
 
-Output:
+That's it. statma detects your agent framework automatically, wraps it, and exposes it on a local port. No modifications to your agent file. No config. No API keys for statma itself.
+
+---
+
+## Connecting your agent or model
+
+`statma serve` handles agents that live in Python files. For everything else, four direct connection methods are supported.
+
+---
+
+### `statma serve` — any local agent file
+
+statma detects and wraps the most common agent frameworks automatically.
+
+```bash
+statma serve ./my_agent.py        # auto-detected: LangChain, LlamaIndex, AutoGen, CrewAI
+statma serve ./my_agent.py --port 7341   # custom port
+statma serve ./my_agent.py --fn run_agent  # specify entry function if needed
+```
+
+Supported frameworks out of the box:
+
+| framework | detection method |
+| :--- | :--- |
+| LangChain | detects `AgentExecutor`, `chain.invoke()` |
+| LlamaIndex | detects `QueryEngine`, `chat_engine` |
+| AutoGen | detects `ConversableAgent`, `initiate_chat()` |
+| CrewAI | detects `Crew`, `crew.kickoff()` |
+| plain function | any `def` that takes a string and returns a string |
+
+Once served, run statma against it:
+
+```bash
+statma run --target http://localhost:7341
+```
+
+---
+
+### HTTP endpoint — agent already running as a server
+
+Your agent is already running. statma talks to it directly.
+
+```bash
+statma run --target http://localhost:8000/chat
+```
+
+statma sends:
+```json
+POST /chat
+{"message": "test prompt"}
+```
+
+Expects back:
+```json
+{"response": "answer"}
+```
+
+Response field name is configurable if your API uses a different shape:
+
+```bash
+statma run --target http://localhost:8000/chat --response-field answer
+```
+
+---
+
+### ollama — local model
+
+```bash
+statma run --target ollama:llama3.1:8b
+```
+
+`tool-reliability` skipped automatically — raw models have no tool access.
+
+---
+
+### OpenAI endpoint — cloud model or compatible API
+
+```bash
+statma run --target openai:gpt-4o
+statma run --target openai:gpt-4o --base-url https://your-endpoint.com/v1
+```
+
+`tool-reliability` skipped automatically.
+
+---
+
+### CLI command — agent that runs as a terminal command
+
+```bash
+statma run --target "claude --prompt {}"
+statma run --target "python my_agent.py --input {}"
+```
+
+`{}` is replaced with each test prompt. stdout is captured as the answer.
+
+---
+
+**Model vs agent — what statma sees:**
+
+| target | type | tool-reliability |
+| :--- | :--- | :--- |
+| `ollama:llama3.1:8b` | model | skipped |
+| `openai:gpt-4o` | model | skipped |
+| `statma serve ./my_agent.py` | agent | runs |
+| `http://localhost:8000/chat` | agent | runs |
+| `"claude --prompt {}"` | agent | runs |
+
+---
+
+## Output
 
 ```
-statma v0.1.0 · llama3.1:8b · 47 tasks · 4 dimensions
+statma v0.1.0 · http://localhost:7341 · 47 tasks · 4 dimensions
 
   reasoning-consistency    ████████████████░░░░  82%   PASS
   tool-reliability         ██████████████░░░░░░  71%   WARN
@@ -96,22 +193,50 @@ statma v0.1.0 · llama3.1:8b · 47 tasks · 4 dimensions
   tags: consistent-reasoning  goal-faithful  tool-selection-marginal  poor-failure-recovery
 
   completed in 2m 13s
-  results → ./statma-results/llama3.1-8b-20260322.json
-  card    → ./statma-results/llama3.1-8b-20260322.png
+  results → ./statma-results/run-20260322.json
+  card    → ./statma-results/run-20260322.png
 ```
 
 ---
 
-### Mode 2 — Regression detection across agent versions
+## Shareable cards
 
-The primary engineering use case. Run statma before and after a change to your agent. Know whether the change helped, hurt, or just moved the breakage.
+Every run produces a result card at `./statma-results/<run-id>.png`. Embed it, post it, compare publicly.
+
+```markdown
+![statma result](./statma-results/run-20260322.png)
+```
+
+The card includes target, dimension scores, overall grade, and a `statma` watermark. Designed to be shared as evidence, not just a screenshot.
+
+---
+
+## What you can do with statma
+
+---
+
+### Score a single run
 
 ```bash
-# save a named baseline
-statma run --adapter script --entrypoint ./my_agent.py --save-as v1
+statma serve ./my_agent.py
+statma run --target http://localhost:7341
 
-# iterate on your agent, then compare
-statma run --adapter script --entrypoint ./my_agent.py --compare-to v1
+# or run one dimension only
+statma run --target http://localhost:7341 --only tool-reliability
+```
+
+---
+
+### Catch regressions across versions
+
+Run before and after a change. Know whether it helped, hurt, or just moved the breakage.
+
+```bash
+statma serve ./my_agent.py
+statma run --target http://localhost:7341 --save-as v1
+
+# make your changes, restart the server, then compare
+statma run --target http://localhost:7341 --compare-to v1
 ```
 
 ```
@@ -124,96 +249,51 @@ statma run --adapter script --entrypoint ./my_agent.py --compare-to v1
   net: +1 point · 1 regression detected
 ```
 
-The regression flag surfaces dimension-level drops even when the overall score improves. A fix that improves failure recovery while silently degrading tool reliability is a regression. statma catches it.
+The regression flag surfaces dimension-level drops even when the overall score improves. A fix that improves failure recovery while silently degrading tool reliability is still a regression. statma catches it.
 
 ---
 
-### Mode 3 — Model vs model on the same agent framework
+### Find the best model for your agent
 
-Which model actually performs best inside your agent? Same framework, same tools, same prompts — swap the underlying model and compare.
+Same agent framework, different underlying model. Which one actually performs best inside your specific agent?
 
 ```bash
 statma matrix \
-  --adapter ollama \
-  --models llama3.1:8b llama3.1:70b mistral:7b qwen2.5:14b
+  --target http://localhost:7341 \
+  --models ollama:llama3.1:8b ollama:llama3.1:70b ollama:qwen2.5:14b openai:gpt-4o
 ```
 
 ```
   model                   reasoning   tools   recovery   faithfulness   overall
-  llama3.1:70b            91%         84%     73%        95%            86   A
-  qwen2.5:14b             88%         79%     68%        93%            82   B+
-  llama3.1:8b             82%         71%     58%        91%            76   B+
-  mistral:7b              74%         66%     51%        87%            70   B
+  openai:gpt-4o           93%         88%     79%        96%            89   A
+  ollama:llama3.1:70b     91%         84%     73%        95%            86   A
+  ollama:qwen2.5:14b      88%         79%     68%        93%            82   B+
+  ollama:llama3.1:8b      82%         71%     58%        91%            76   B+
 ```
 
-Paste this table directly into your README or paper. Every result is reproducible.
+Paste directly into your README or paper. Every result is reproducible.
 
 ---
 
-### Mode 4 — Raw model vs agent wrapper
+### Measure whether your agent wrapper actually helps
 
-The question nobody has clean data on: **does wrapping a model in an agent loop actually improve its reliability, or does the added complexity hurt it?**
-
-Run the same underlying model twice — once raw, once inside your agent framework.
+Does wrapping a model in an agent loop improve its reliability, or does the complexity hurt it? Nobody has clean data on this. Now you can get yours.
 
 ```bash
 statma compare \
-  --baseline "openai:gpt-4o" \
-  --target   "script:./my_agent.py"
+  --baseline openai:gpt-4o \
+  --target   http://localhost:7341
 ```
 
 ```
-  dimension               gpt-4o (raw)    my_agent.py    delta
-  reasoning-consistency   79%             82%            +3%   ▲
-  tool-reliability        —               71%            n/a   (raw model has no tools)
-  failure-recovery        61%             58%            -3%   ▼
-  goal-faithfulness       88%             91%            +3%   ▲
+  dimension               gpt-4o (raw)    agent (localhost)    delta
+  reasoning-consistency   79%             82%                  +3%   ▲
+  tool-reliability        —               71%                  n/a
+  failure-recovery        61%             58%                  -3%   ▼
+  goal-faithfulness       88%             91%                  +3%   ▲
 
-  note: tool-reliability only runs against agents with tool access
+  note: tool-reliability skipped for raw model — no tool access
 ```
-
-This comparison surfaces something practically important: agent wrappers add reliability in some dimensions and degrade it in others. statma makes that tradeoff visible and measurable.
-
----
-
-## Shareable cards
-
-Every run produces a result card at `./statma-results/<run-id>.png`. Embed it, post it, compare across teams.
-
-```markdown
-![statma result](./statma-results/llama3.1-8b-20260322.png)
-```
-
-The card includes model name, framework, dimension scores, overall grade, and a `statma` watermark. It is designed to be shared as evidence, not just a screenshot.
-
----
-
-## Adapters
-
-Three adapters ship by default:
-
-| adapter | target |
-| :--- | :--- |
-| `ollama` | any model running locally via ollama |
-| `openai` | OpenAI API or any OpenAI-compatible endpoint |
-| `script` | a Python file exposing `run(prompt: str) -> str` |
-
-Custom adapters are twelve lines:
-
-```python
-from statma.adapters import BaseAdapter
-
-class MyAdapter(BaseAdapter):
-    def query(self, prompt: str) -> str:
-        # call your agent or model here
-        return response
-```
-
-```bash
-statma run --adapter ./adapters/my_adapter.py
-```
-
-Any framework works — LangChain, AutoGen, CrewAI, LlamaIndex, raw API calls. If it takes a string and returns a string, statma can benchmark it.
 
 ---
 
@@ -231,7 +311,7 @@ statma suite run-case --id tr-042
 # add your own cases
 statma suite add --dimension failure-recovery --file ./my_cases.yaml
 
-# validate a case file before adding
+# validate before adding
 statma suite validate --file ./my_cases.yaml
 ```
 
@@ -241,13 +321,15 @@ Each case specifies an input prompt, one or more acceptable outputs matched by s
 
 ## Design decisions
 
-**No LLM-as-judge.** Evaluation is rule-based. Scores are deterministic and reproducible. The same agent on the same version will always produce the same result.
+**No LLM-as-judge.** Evaluation is rule-based. Scores are deterministic and reproducible. The same agent on the same version always produces the same result.
 
-**No cloud dependency.** Everything runs locally. No data leaves your machine unless you explicitly use an external model endpoint.
+**No code changes required.** `statma serve` detects your framework and wraps it. For agents already running as servers, statma talks directly to the endpoint. Nothing inside your agent needs to change.
 
-**Framework-agnostic.** statma does not care how your agent is built. It only cares what comes out.
+**No cloud dependency.** Everything runs locally. No data leaves your machine unless you explicitly point statma at an external model endpoint.
 
-**Test cases are first-class.** A benchmark is only as good as its cases. The suite is open, auditable, and extensible by design. This is not a black-box score generator.
+**Framework-agnostic.** statma does not care how your agent is built. If it answers a prompt, statma can benchmark it.
+
+**Test cases are first-class.** A benchmark is only as good as its cases. The suite is open, auditable, and extensible. This is not a black-box score generator.
 
 ---
 
@@ -255,10 +337,10 @@ Each case specifies an input prompt, one or more acceptable outputs matched by s
 
 | version | scope |
 | :--- | :--- |
-| `v0.1` | core four dimensions · three adapters · JSON output · shareable card · single-run scoring |
+| `v0.1` | core four dimensions · `statma serve` with framework auto-detection · four connection methods · JSON output · shareable card · single-run scoring |
 | `v0.2` | regression detection · baseline saves · version comparison |
-| `v0.3` | model matrix · multi-model comparison tables |
-| `v0.4` | raw model vs agent wrapper comparison (Mode 4) |
+| `v0.3` | model matrix · best-model-for-agent comparison |
+| `v0.4` | raw model vs agent wrapper comparison |
 | `v0.5` | multi-turn and agentic loop test cases |
 | `v0.6` | tool-call trace analysis |
 | `v0.7` | community suite contributions pipeline |
